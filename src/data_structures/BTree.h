@@ -1,13 +1,12 @@
 #pragma once
 
 #include "Sequence.h"
-#include <chrono>
 
 template <typename T>
 class BTree
 {
 private:
-    static constexpr int ORDER = 4;
+    static constexpr int ORDER = 4; // max children per node
 
     struct BNode
     {
@@ -31,18 +30,21 @@ private:
     BNode *root;
     size_t size;
 
-    BNode *search_node(BNode *node, const T &key) const
+    BNode *search_node(BNode *node, const T &key, size_t &out_index) const
     {
         size_t i = 0;
         while (i < node->keys.get_size() && key > node->keys[i])
             i++;
 
         if (i < node->keys.get_size() && key == node->keys[i])
+        {
+            out_index = i;
             return node;
+        }
 
         if (node->is_leaf)
             return nullptr;
-        return search_node(node->children[i], key);
+        return search_node(node->children[i], key, out_index);
     }
 
     void insert_non_full(BNode *node, const T &key)
@@ -53,21 +55,21 @@ private:
         {
             while (i >= 0 && key < node->keys[i])
                 i--;
-            node->keys.insert(i + 1, key);
+            node->keys.insert(static_cast<size_t>(i + 1), key);
         }
         else
         {
             while (i >= 0 && key < node->keys[i])
                 i--;
             i++;
-            BNode *child = node->children[i];
+            BNode *child = node->children[static_cast<size_t>(i)];
 
             if (static_cast<int>(child->keys.get_size()) >= ORDER - 1)
             {
-                split_child(node, i);
-                if (key > node->keys[i])
+                split_child(node, static_cast<int>(i));
+                if (key > node->keys[static_cast<size_t>(i)])
                     i++;
-                child = node->children[i];
+                child = node->children[static_cast<size_t>(i)];
             }
             insert_non_full(child, key);
         }
@@ -75,35 +77,44 @@ private:
 
     void split_child(BNode *parent, int i)
     {
-        BNode *full_child = parent->children[i];
+        BNode *full_child = parent->children[static_cast<size_t>(i)];
         BNode *new_child = new BNode(full_child->is_leaf);
-        int mid = (ORDER - 1) / 2;
 
-        for (int j = 0; j < (ORDER - 1) - mid; j++)
+        int mid = (ORDER - 1) / 2; // e.g., ORDER=4 -> mid=1
+
+        // save median
+        T median_key = full_child->keys[static_cast<size_t>(mid)];
+
+        // move right half keys to new_child
+        for (size_t j = static_cast<size_t>(mid + 1); j < full_child->keys.get_size(); ++j)
         {
-            new_child->keys.push_back(full_child->keys[mid + 1 + j]);
+            new_child->keys.push_back(full_child->keys[j]);
         }
+
+        // move children if any
+        if (!full_child->is_leaf)
+        {
+            for (size_t j = static_cast<size_t>(mid + 1); j < full_child->children.get_size(); ++j)
+            {
+                new_child->children.push_back(full_child->children[j]);
+            }
+        }
+
+        // shrink full_child
+        while (full_child->keys.get_size() > static_cast<size_t>(mid))
+            full_child->keys.pop_back();
 
         if (!full_child->is_leaf)
         {
-            for (int j = 0; j <= (ORDER - 1) - mid; j++)
-            {
-                new_child->children.push_back(full_child->children[mid + 1 + j]);
-            }
-            for (int j = static_cast<int>(full_child->children.get_size()) - 1; j > mid; j--)
-            {
+            while (full_child->children.get_size() > static_cast<size_t>(mid + 1))
                 full_child->children.pop_back();
-            }
         }
 
-        for (int j = static_cast<int>(full_child->keys.get_size()) - 1; j > mid; j--)
-        {
-            full_child->keys.pop_back();
-        }
+        // insert median into parent
+        parent->keys.insert(static_cast<size_t>(i), median_key);
 
-        parent->keys.insert(i, full_child->keys[mid]);
-        full_child->keys.pop_back();
-        parent->children.insert(i + 1, new_child);
+        // insert new_child as parent's child at position i+1
+        parent->children.insert(static_cast<size_t>(i + 1), new_child);
     }
 
     void clear_node(BNode *node)
@@ -147,14 +158,24 @@ public:
 
     bool contains(const T &key) const
     {
-        return search_node(root, key) != nullptr;
+        size_t idx = 0;
+        return search_node(root, key, idx) != nullptr;
+    }
+
+    // Return pointer to stored key (valid until node deletion)
+    T *search(const T &key) const
+    {
+        size_t idx = 0;
+        BNode *node = search_node(root, key, idx);
+        if (node)
+            return const_cast<T *>(&node->keys[idx]);
+        return nullptr;
     }
 
     bool search_slow(const T &key) const
     {
-        // Имитируем задержку доступа
         volatile int dummy = 0;
-        for (int i = 0; i < 100000; i++)
+        for (int i = 0; i < 100000; ++i)
             dummy += i;
         return contains(key);
     }

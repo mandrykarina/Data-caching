@@ -1,144 +1,199 @@
-#include "Benchmark.h"
-#include "../cache/CacheManager.h"
-#include "../data_structures/BTree.h"
-#include "../data_structures/Sequence.h"
+// src/benchmark/benchmark.cpp
+
 #include <iostream>
-#include <random>
+#include <fstream>
+#include <chrono>
 #include <iomanip>
+
+#include "../data_structures/Sequence.h"
+#include "../data_structures/Dictionary.h"
+#include "../data_structures/BTree.h"
 
 using namespace std;
 
-// -----------------------------------------
-// Generate Zipf-like access pattern
-// -----------------------------------------
-Sequence<int> generate_zipf_pattern(int size, int requests)
+// Таймер
+long long ms_now()
 {
-    Sequence<int> seq;
-    random_device rd;
-    mt19937 gen(rd());
-
-    for (int i = 0; i < requests; i++)
-    {
-        if (gen() % 100 < 80)
-            seq.push_back(gen() % (size / 5 + 1));
-        else
-            seq.push_back((size / 5) + (gen() % (size - size / 5)));
-    }
-    return seq;
+    return chrono::duration_cast<chrono::milliseconds>(
+               chrono::steady_clock::now().time_since_epoch())
+        .count();
 }
 
-// -----------------------------------------
-// Generate random access pattern
-// -----------------------------------------
-Sequence<int> generate_random_pattern(int size, int requests)
+// ------------------------
+// Оценка памяти
+// ------------------------
+size_t estimate_memory_dictionary(size_t entries)
 {
-    Sequence<int> seq;
-    random_device rd;
-    mt19937 gen(rd());
-    uniform_int_distribution<> dis(0, size - 1);
-
-    for (int i = 0; i < requests; i++)
-        seq.push_back(dis(gen));
-
-    return seq;
+    // приблизительная модель:
+    //   Pair(K,V) ≈ 16–24 bytes (ключ + значение + выравнивание)
+    //   указатели списков, bucket array etc
+    //   грубо: 48 bytes на элемент
+    return entries * 48;
 }
 
-// -----------------------------------------
-// Benchmark: cache vs direct storage
-// -----------------------------------------
-BenchmarkResult benchmark_compare(CacheManager<int> &cache, const Sequence<int> &data,
-                                  const Sequence<int> &pattern)
+size_t estimate_memory_btree(size_t entries)
 {
-    BenchmarkResult result;
-
-    // -------------------------
-    // Cache time
-    // -------------------------
-    auto t1 = chrono::high_resolution_clock::now();
-
-    for (size_t i = 0; i < pattern.get_size(); i++)
-        cache.get(pattern[i]);
-
-    auto t2 = chrono::high_resolution_clock::now();
-    double cache_ms = chrono::duration_cast<chrono::milliseconds>(t2 - t1).count();
-
-    // -------------------------
-    // Storage (BTree)
-    // -------------------------
-    BTree<int> tree;
-    for (size_t i = 0; i < data.get_size(); i++)
-        tree.insert(data[i]);
-
-    t1 = chrono::high_resolution_clock::now();
-
-    for (size_t i = 0; i < pattern.get_size(); i++)
-        tree.search_slow(pattern[i]);
-
-    t2 = chrono::high_resolution_clock::now();
-    double storage_ms = chrono::duration_cast<chrono::milliseconds>(t2 - t1).count();
-
-    // Fill structure
-    auto stats = cache.get_statistics();
-
-    result.cache_size = cache.get_max_cache_size();
-    result.data_size = data.get_size();
-    result.num_requests = pattern.get_size();
-    result.time_cache_total_ms = cache_ms;
-    result.time_storage_total_ms = storage_ms;
-    result.hits = stats.hits;
-    result.misses = stats.misses;
-    result.hit_rate = stats.hit_rate;
-    result.speedup = storage_ms / cache_ms;
-
-    return result;
+    // в BTree каждый узел содержит до ORDER-1 ключей и ORDER детей
+    // ORDER=4, значит 3 ключа, 4 указателя
+    // Эмпирическая модель: ~64 bytes на запись
+    return entries * 64;
 }
 
-// -----------------------------------------
-// Run full benchmark suite
-// -----------------------------------------
-void run_all_benchmarks()
+// ------------------------
+// Бенчмарк для Dictionary и BTree
+// ------------------------
+struct BenchResult
 {
-    cout << "\n============ RUNNING BENCHMARKS ============\n";
+    int n;
+    long long insert_dict_ms;
+    long long search_dict_ms;
+    long long insert_tree_ms;
+    long long search_tree_ms;
+    size_t mem_dict;
+    size_t mem_tree;
+};
 
-    // Create sample data
+BenchResult run_single(int n)
+{
+    BenchResult r;
+    r.n = n;
+
     Sequence<int> data;
-    for (int i = 0; i < 2000; i++)
+    data.reserve(n);
+    for (int i = 0; i < n; ++i)
         data.push_back(i);
 
-    int cache_sizes[] = {10, 50, 100, 200};
+    // ---------------------------
+    // Dictionary — вставка
+    // ---------------------------
+    Dictionary<int, int> dict;
 
-    for (int c : cache_sizes)
+    long long t1 = ms_now();
+    for (int i = 0; i < n; ++i)
+        dict.insert(i, i);
+    long long t2 = ms_now();
+    r.insert_dict_ms = t2 - t1;
+
+    // поиск 1000 случайных значений или всех n если n<1000
+    t1 = ms_now();
+    for (int i = 0; i < min(n, 1000); ++i)
     {
-        cout << "\n--- Cache size = " << c << " ---\n";
+        int key = i % n;
+        dict.find(key);
+    }
+    t2 = ms_now();
+    r.search_dict_ms = t2 - t1;
 
-        CacheManager<int> cache(c);
-        cache.initialize(data);
+    // ---------------------------
+    // BTree — вставка
+    // ---------------------------
+    BTree<int> tree;
 
-        // Request patterns
-        auto pattern_zipf = generate_zipf_pattern(data.get_size(), 5000);
-        auto pattern_rand = generate_random_pattern(data.get_size(), 5000);
+    t1 = ms_now();
+    for (int i = 0; i < n; ++i)
+        tree.insert(i);
+    t2 = ms_now();
+    r.insert_tree_ms = t2 - t1;
 
-        // Zipf
-        BenchmarkResult r1 =
-            benchmark_compare(cache, data, pattern_zipf);
+    // ---------------------------
+    // поиск
+    // ---------------------------
+    t1 = ms_now();
+    for (int i = 0; i < min(n, 1000); ++i)
+    {
+        int key = i % n;
+        tree.search(key);
+    }
+    t2 = ms_now();
+    r.search_tree_ms = t2 - t1;
 
-        cout << "Zipf:  hits=" << r1.hits
-             << " misses=" << r1.misses
-             << " hit-rate=" << fixed << setprecision(2) << r1.hit_rate
-             << "%  speedup=" << r1.speedup << "x\n";
+    // ---------------------------
+    // Память
+    // ---------------------------
+    r.mem_dict = estimate_memory_dictionary(dict.get_size());
+    r.mem_tree = estimate_memory_btree(tree.get_size());
 
-        // Reset cache for new test
-        cache.initialize(data);
+    return r;
+}
 
-        // Random
-        BenchmarkResult r2 =
-            benchmark_compare(cache, data, pattern_rand);
+// Запуск всех тестов
+void run_all_benchmarks()
+{
+    cout << "\n=========== BENCHMARK: HashTable vs BTree ===========\n";
 
-        cout << "Random: hits=" << r2.hits
-             << " misses=" << r2.misses
-             << " hit-rate=" << fixed << setprecision(2) << r2.hit_rate
-             << "%  speedup=" << r2.speedup << "x\n";
+    vector<int> sizes = {10, 100, 1000, 10000};
+    vector<BenchResult> results;
+
+    for (int n : sizes)
+    {
+        cout << "\n--- Размер: " << n << " ---\n";
+        BenchResult r = run_single(n);
+
+        cout << "Dictionary insert: " << r.insert_dict_ms << " ms\n";
+        cout << "Dictionary search: " << r.search_dict_ms << " ms\n";
+        cout << "BTree insert:      " << r.insert_tree_ms << " ms\n";
+        cout << "BTree search:      " << r.search_tree_ms << " ms\n";
+        cout << "Approx memory Dictionary: " << r.mem_dict << " bytes\n";
+        cout << "Approx memory BTree:      " << r.mem_tree << " bytes\n";
+
+        results.push_back(r);
     }
 
-    cout << "\n============ BENCHMARKS FINISHED ============\n";
+    // ---------------------------------------------
+    // Выгрузка CSV: скорость
+    // ---------------------------------------------
+    {
+        ofstream out("benchmark_speed.csv");
+        out << "n,dict_insert_ms,dict_search_ms,btree_insert_ms,btree_search_ms\n";
+        for (auto &r : results)
+        {
+            out << r.n << ","
+                << r.insert_dict_ms << ","
+                << r.search_dict_ms << ","
+                << r.insert_tree_ms << ","
+                << r.search_tree_ms << "\n";
+        }
+    }
+
+    // ---------------------------------------------
+    // Выгрузка CSV: память
+    // ---------------------------------------------
+    {
+        ofstream out("benchmark_memory.csv");
+        out << "n,dict_memory,btree_memory\n";
+        for (auto &r : results)
+        {
+            out << r.n << ","
+                << r.mem_dict << ","
+                << r.mem_tree << "\n";
+        }
+    }
+
+    // ---------------------------------------------
+    // Консольная итоговая таблица
+    // ---------------------------------------------
+    cout << "\n=========== Итоговая таблица ===========\n";
+    cout << left << setw(10) << "n"
+         << setw(18) << "dict_ins (ms)"
+         << setw(18) << "dict_search (ms)"
+         << setw(18) << "tree_ins (ms)"
+         << setw(18) << "tree_search (ms)"
+         << setw(18) << "dict_mem"
+         << setw(18) << "tree_mem"
+         << "\n";
+
+    for (auto &r : results)
+    {
+        cout << left << setw(10) << r.n
+             << setw(18) << r.insert_dict_ms
+             << setw(18) << r.search_dict_ms
+             << setw(18) << r.insert_tree_ms
+             << setw(18) << r.search_tree_ms
+             << setw(18) << r.mem_dict
+             << setw(18) << r.mem_tree
+             << "\n";
+    }
+
+    cout << "\nCSV файлы созданы: benchmark_speed.csv, benchmark_memory.csv\n";
+    cout << "=========== BENCHMARK FINISHED ===========\n\n";
 }

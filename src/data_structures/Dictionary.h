@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Sequence.h"
-#include <unordered_map>
+#include <functional>
 
 template <typename K, typename V>
 struct Pair
@@ -52,7 +52,7 @@ private:
             for (size_t j = 0; j < old_buckets[i].get_size(); ++j)
             {
                 const auto &entry = old_buckets[i][j];
-                size_t new_idx = get_bucket_index(entry.key);
+                size_t new_idx = std::hash<K>()(entry.key) % capacity;
                 buckets[new_idx].push_back(entry);
             }
         }
@@ -87,7 +87,7 @@ public:
         buckets[idx].push_back(Entry(key, value));
         size++;
 
-        if (size >= capacity * LOAD_FACTOR_EXPAND)
+        if (static_cast<double>(size) >= static_cast<double>(capacity) * LOAD_FACTOR_EXPAND)
         {
             rehash(capacity * 2);
         }
@@ -151,6 +151,7 @@ public:
     size_t get_size() const { return size; }
     size_t get_capacity() const { return capacity; }
 
+    // Return a copy of all stored pairs (for inspection / tests)
     Sequence<Entry> get_all_entries() const
     {
         Sequence<Entry> result;

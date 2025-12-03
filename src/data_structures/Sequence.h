@@ -2,7 +2,6 @@
 
 #include <stdexcept>
 #include <algorithm>
-#include <cstring>
 
 template <typename T>
 class Sequence
@@ -60,7 +59,6 @@ public:
     {
         if (this != &other)
         {
-            // вместо ручного delete → сразу resize(), он сам всё корректно сделает
             resize(other.capacity);
             size = other.size;
             std::copy(other.data, other.data + other.size, data);
@@ -87,6 +85,9 @@ public:
 
     void push_back(const T &value)
     {
+        if (capacity == 0)
+            resize(INITIAL_CAPACITY);
+
         if (size >= capacity)
             resize(capacity * 2);
         data[size++] = value;

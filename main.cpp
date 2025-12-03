@@ -5,8 +5,6 @@
 
 using namespace std;
 
-void run_interactive(); // from Interactive.cpp
-
 int main()
 {
     while (true)
@@ -21,20 +19,22 @@ int main()
         cout << "Select: ";
 
         int opt;
-        cin >> opt;
+        if (!(cin >> opt))
+        {
+            cin.clear();
+            string dummy;
+            getline(cin, dummy);
+            continue;
+        }
 
         if (opt == 1)
             run_all_tests();
-
         else if (opt == 2)
             run_all_benchmarks();
-
         else if (opt == 3)
             run_interactive();
-
         else
             break;
     }
-
     return 0;
 }
