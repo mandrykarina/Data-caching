@@ -59,7 +59,7 @@ BenchResult run_single(int n)
     r.n = n;
 
     Sequence<int> data;
-    data.reserve(n);
+
     for (int i = 0; i < n; ++i)
         data.push_back(i);
 

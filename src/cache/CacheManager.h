@@ -108,6 +108,21 @@ public:
         stats = CacheStats();
     }
 
+    void debug_dump_freq() const
+    {
+        std::cout << "\n[FREQ LISTS]\n";
+        for (auto &p : freq_lists)
+        {
+            size_t freq = p.first;
+            std::cout << "freq " << freq << ": ";
+
+            for (int k : p.second)
+                std::cout << k << " ";
+            std::cout << "\n";
+        }
+        std::cout << "min_freq = " << min_freq << "\n";
+    }
+
     void initialize(const Sequence<T> &data)
     {
         // prepare slow storage
