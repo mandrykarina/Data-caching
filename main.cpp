@@ -10,7 +10,7 @@ int main()
     while (true)
     {
         cout << "\n======================================\n";
-        cout << "           CACHE SYSTEM MENU           \n";
+        cout << "           CACHE SYSTEM MENU\n";
         cout << "======================================\n";
         cout << "1. Run unit tests\n";
         cout << "2. Run benchmarks\n";
@@ -36,5 +36,6 @@ int main()
         else
             break;
     }
+
     return 0;
 }
